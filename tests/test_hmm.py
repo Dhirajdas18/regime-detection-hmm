@@ -69,3 +69,27 @@ def test_logscore_is_the_predictive_density_of_each_day():
     p = hmm.fit(x[:n], 1, restarts=1)
     z = (x[n] - p["mu"][0]) / p["sd"][0]
     assert np.isclose(rt["logscore"][0], -0.5 * z * z - np.log(p["sd"][0] * np.sqrt(2 * np.pi)))
+
+
+def test_smooth_matches_brute_force_enumeration():
+    import itertools
+
+    x = np.array([0.3, -2.0, 0.1, 1.5, -0.2])
+    pi, A = np.array([0.6, 0.4]), np.array([[0.9, 0.1], [0.2, 0.8]])
+    mu, sd = np.array([0.1, -0.3]), np.array([0.8, 2.0])
+    dens = lambda v, k: np.exp(-0.5 * ((v - mu[k]) / sd[k]) ** 2) / (sd[k] * np.sqrt(2 * np.pi))  # noqa: E731
+    paths = list(itertools.product([0, 1], repeat=len(x)))
+    def weight(p):
+        steps = [A[p[t - 1], p[t]] * dens(x[t], p[t]) for t in range(1, len(x))]
+        return pi[p[0]] * dens(x[0], p[0]) * np.prod(steps)
+
+    w = np.array([weight(p) for p in paths])
+    pw = list(zip(w, paths, strict=True))
+    gamma, xi, ll = hmm.smooth(x, pi, A, mu, sd)
+    assert np.isclose(ll, np.log(w.sum()))
+    for t in range(len(x)):
+        assert np.isclose(gamma[t, 1], sum(wi for wi, p in pw if p[t] == 1) / w.sum())
+    pair = sum(wi for wi, p in pw for t in range(len(x) - 1) if p[t] == 0 and p[t + 1] == 1)
+    assert np.isclose(xi[0, 1], pair / w.sum())
+    best = paths[int(np.argmax(w))]
+    assert list(hmm.viterbi(x, pi, A, mu, sd)) == list(best)

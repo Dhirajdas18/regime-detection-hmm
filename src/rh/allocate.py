@@ -4,7 +4,9 @@ to it and holding the weight over the next day; cash earns the risk-free rate.
 Costs per rupee traded, as in momentum-after-costs (Zerodha delivery, Nov 2026): STT 0.1% each
 side, stamp duty 0.015% on buys, NSE 0.00322% and SEBI 0.0001% each side with 18% GST, and 5 bp of
 slippage each side. That is equity delivery; an index ETF pays less STT, so these are on the high
-side. No tax.
+side. Costs are charged only on changes of the decided weight: the first purchase is not charged,
+and a partial weight is assumed to stay at that weight between decisions (the daily drift back to
+it is not charged), which slightly understates costs for the scaled rules. No tax.
 """
 
 import numpy as np
@@ -49,13 +51,16 @@ def sticky(target: pd.Series, step: float = 0.1) -> pd.Series:
 
 
 def stats(r: pd.Series, rf: pd.Series, traded: pd.Series | None = None,
-          per_year: int = 250) -> dict:
+          per_year: int = 248) -> dict:
+    """Compounded growth over calendar time, volatility and Sharpe (above `rf`) with `per_year`
+    trading days, worst fall, and how many times a year the whole position was traded."""
     e = r - rf
     wealth = np.exp(np.log1p(r).cumsum())
-    out = {"cagr": float(wealth.iloc[-1] ** (per_year / len(r)) - 1),
+    years = (r.index[-1] - r.index[0]).days / 365.25 + 1 / per_year
+    out = {"cagr": float(wealth.iloc[-1] ** (1 / years) - 1),
            "vol": float(r.std() * np.sqrt(per_year)),
            "sharpe": float(e.mean() / e.std() * np.sqrt(per_year)),
            "dd": float((wealth / wealth.cummax() - 1).min())}
     if traded is not None:
-        out["turnover"] = float(traded.sum() / (len(r) / per_year))
+        out["turnover"] = float(traded.sum() / years)
     return out

@@ -53,7 +53,7 @@ const RH = (() => {
     const A = Array.from({ length: K }, (_, i) => Array.from({ length: K }, (_, j) => (i === j ? 0.95 : 0.05 / Math.max(K - 1, 1))));
     return { pi: new Array(K).fill(1 / K), A, mu: new Array(K).fill(mean), sd };
   }
-  function fit(x, K, iters = 300, tol = 1e-7, sdFloor = 1e-4) {
+  function fit(x, K, iters = 1000, tol = 1e-6, sdFloor = 1e-4) {
     const p = start(x, K);
     let prev = -Infinity, ll = 0, it = 0;
     for (it = 0; it < iters; it++) {
@@ -63,7 +63,7 @@ const RH = (() => {
       p.A = s.xi.map((r) => { const t = r.reduce((u, v) => u + v, 0); return Array.from(r, (v) => v / t); });
       p.mu = w.map((wk, k) => s.gamma.reduce((u, g, t) => u + g[k] * x[t], 0) / wk);
       p.sd = w.map((wk, k) => Math.max(Math.sqrt(s.gamma.reduce((u, g, t) => u + g[k] * (x[t] - p.mu[k]) ** 2, 0) / wk), sdFloor));
-      if (ll - prev < tol * Math.abs(ll)) break;
+      if (ll - prev < tol) break;
       prev = ll;
     }
     const o = p.sd.map((v, i) => [v, i]).sort((a, b) => a[0] - b[0]).map(([, i]) => i);

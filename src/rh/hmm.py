@@ -87,7 +87,7 @@ def _start(x, K, rng, jitter):
     return {"pi": np.full(K, 1 / K), "A": A, "mu": np.full(K, x.mean()), "sd": sd}
 
 
-def fit(x, K: int = 2, restarts: int = 4, iters: int = 300, tol: float = 1e-7,
+def fit(x, K: int = 2, restarts: int = 4, iters: int = 1000, tol: float = 1e-6,
         seed: int = 0, sd_floor: float = 1e-4) -> dict:
     """Baum-Welch from `restarts` starts (the first without jitter); keeps the highest
     likelihood. Returns pi, A, mu, sd (sorted calmest first), ll and iterations."""
@@ -105,7 +105,7 @@ def fit(x, K: int = 2, restarts: int = 4, iters: int = 300, tol: float = 1e-7,
             p["mu"] = gamma.T @ x / w
             p["sd"] = np.maximum(np.sqrt((gamma * (x[:, None] - p["mu"]) ** 2).sum(axis=0) / w),
                                  sd_floor)
-            if ll - prev < tol * abs(ll):
+            if ll - prev < tol:  # absolute: stop once the log-likelihood gains < tol
                 break
             prev = ll
         p["ll"], p["iters"] = ll, it + 1

@@ -9,7 +9,9 @@ import pandas as pd
 
 from rh import plots
 
-PER_YEAR = 250
+# Trading days a year in IIMA's daily file: 8,002 days over 32.2 calendar years
+# (Oct 1993 - Dec 2025). Compounded growth uses calendar time.
+PER_YEAR = 248
 
 
 def market() -> pd.Series:
@@ -131,6 +133,7 @@ def report_lookahead(out_dir: Path) -> dict:
     full["real time"] = rt["probs"][:, 1] > 0.5
     res = {"scored": f"{len(idx)} days, {idx[0]:%d %b %Y}-{idx[-1]:%d %b %Y}; real-time model "
                      f"refitted {len(rt['fits'])} times"}
+    res["  smoothed: turbulent"] = f"{full['smoothed'].mean():.1%} of days"
     for k in ("Viterbi", "filtered", "real time"):
         res[f"  {k}: same state as smoothed"] = (f"{(full[k] == full['smoothed']).mean():.1%} of "
                                                   f"days; turbulent {full[k].mean():.0%} of days")
@@ -155,12 +158,14 @@ def report_lookahead(out_dir: Path) -> dict:
     sh = {}
     for k, r in toy.items():
         sh[k] = sharpe(r, rf)
-        g = float(np.exp(np.log1p(r).sum() * PER_YEAR / len(r)) - 1)
+        g = float(np.exp(np.log1p(r).sum() / ((r.index[-1] - r.index[0]).days / 365.25)) - 1)
         res[f"toy rule, {k}"] = (f"compounded {g:+.1%} a year, volatility "
                                  f"{r.std() * np.sqrt(PER_YEAR):.1%}, Sharpe {sh[k]:.2f}")
     fits = rt["fits"]
-    res["real-time model's turbulent volatility over the years"] = ", ".join(
-        f"{e:%Y} {f['sd'][1] * np.sqrt(PER_YEAR):.0f}%" for e, f in list(fits.items())[::5])
+    tv = [f["sd"][1] * np.sqrt(PER_YEAR) for f in fits.values()]
+    res["real-time model's turbulent volatility over the years"] = (
+        f"{min(tv):.0f}-{max(tv):.0f}% a year across {len(tv)} refits; " + ", ".join(
+            f"{e:%Y} {f['sd'][1] * np.sqrt(PER_YEAR):.0f}%" for e, f in list(fits.items())[::5]))
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={"width_ratios": [1.5, 1]})
     ax = axes[0]
@@ -247,7 +252,19 @@ def report_states_count(out_dir: Path) -> dict:
         vols[K] = v
         res[f"{K} states, volatility range across {len(v)} refits"] = ", ".join(
             f"state {k + 1} {v[:, k].min():.0f}-{v[:, k].max():.0f}%" for k in range(K))
+    early = [e.year < 2004 for e in rts[3]["fits"]]
+    res["  3 states, refits before 2004: calm and middle volatility"] = ", ".join(
+        f"{e:%Y} {f['sd'][0] * np.sqrt(PER_YEAR):.0f}% and {f['sd'][1] * np.sqrt(PER_YEAR):.0f}%"
+        for (e, f), keep in zip(rts[3]["fits"].items(), early, strict=True) if keep)
     flat = [(e, f) for e, f in rts[4]["fits"].items() if f["sd"][0] * np.sqrt(PER_YEAR) < 5]
+    if flat:
+        e0, f0 = flat[len(flat) // 2]
+        n0 = int(np.searchsorted(x.index, e0, side="right"))
+        g0, _, _ = hmm.smooth(X[:n0], f0["pi"], f0["A"], f0["mu"], f0["sd"])
+        held = g0[:, 0] > 0.5
+        res["  days assigned to the near-flat state (smoothed, one refit)"] = (
+            f"refit to {e0:%b %Y}: {int(held.sum())} of {n0} days, median size of their return "
+            f"{np.median(np.abs(X[:n0][held])):.3f}%" if held.any() else "none")
     res["  four-state refits with a near-flat state (volatility under 5% a year)"] = (
         f"{len(flat)} of {len(rts[4]['fits'])}; its volatility "
         f"{min(f['sd'][0] for _, f in flat) * np.sqrt(PER_YEAR):.1f}-"
@@ -284,7 +301,8 @@ def report_states_count(out_dir: Path) -> dict:
     ax.set_xlabel("refit at year-end")
     ax.legend(frameon=False, fontsize=8.5, loc="lower left")
     ax.set_title("A fourth state was often a one-day quirk", fontsize=10.5, loc="left")
-    fig.suptitle("Three states beat two out of sample in most years; a fourth added little",
+    fig.suptitle("Three states forecast best out of sample; two were the most stable; a fourth "
+                 "added little",
                  x=0.01, ha="left", fontweight="bold")
     fig.tight_layout()
     plots.save(fig, out_dir, "count")
@@ -297,7 +315,7 @@ def report_forecast(out_dir: Path) -> dict:
     each day (rh.forecast): the two-state HMM refitted each year-end, EWMA (0.94), the 20-day
     standard deviation and GJR-GARCH(1,1)-t refitted each year-end. (A) IIMA's market, 1999-2025.
     (B) NIFTY from the NSE bhavcopy archive, 2015-2026, adding India VIX at the previous close as a
-    variance forecast (VIX² / 250). Scored by QLIKE (Newey-West t, 20 lags, of the difference
+    variance forecast (VIX² / 248). Scored by QLIKE (Newey-West t, 20 lags, of the difference
     from GJR) and 1% VaR breach rates with the Kupiec test (5% critical value 3.84); EWMA, 20-day
     and VIX VaR assume normal returns, the HMM uses its mixture, GJR its t."""
     from rh import forecast as F
@@ -390,7 +408,8 @@ def report_allocate(out_dir: Path) -> dict:
     pt = pd.Series(rt["probs"][:, 1], index=idx)
     mkt, rf = m["MARKET"].loc[idx], m["RF"].loc[idx]
     target = x.loc[:"1998"].std()
-    volw = (target / np.sqrt(F.gjr(x)["var"].reindex(idx))).clip(upper=1)
+    # GJR's variance for day t+1 is known at t's close: use it for the weight decided at t
+    volw = (target / np.sqrt(F.gjr(x)["var"].shift(-1).reindex(idx))).clip(upper=1).ffill()
     lvl = np.exp(x.cumsum() / 100)
     trend = (lvl > lvl.rolling(200).mean()).astype(float).reindex(idx)
     rules = {"buy and hold": pd.Series(1.0, index=idx),
@@ -468,7 +487,8 @@ def dummy_t(y: np.ndarray, z: np.ndarray, lags: int = 20) -> float:
 def report_factors(out_dir: Path) -> dict:
     """Market, size, value and momentum (IIMA's daily factors) by regime, 1999-2025: each day
     labelled by the real-time turbulent chance at the previous close (finding 2), and by hindsight
-    (smoothed, whole-period model) for contrast. Average and volatility a year in each state, the
+    (smoothed, whole-period model, also at the previous close) for contrast. Average and
+    volatility a year in each state, the
     Newey-West t (20 lags) of the difference, the same split by half, momentum on turbulent days
     when the market rose, and a paper rule holding each long-short factor only after calm closes
     (no costs)."""
@@ -480,7 +500,7 @@ def report_factors(out_dir: Path) -> dict:
     turb = pd.Series(rt["probs"][:, 1] > 0.5, index=rt["dates"]).shift(1).dropna().astype(bool)
     p = hmm.fit(x.to_numpy(), 2)
     sm, _, _ = hmm.smooth(x.to_numpy(), p["pi"], p["A"], p["mu"], p["sd"])
-    hind = pd.Series(sm[:, 1] > 0.5, index=x.index).loc[turb.index]
+    hind = pd.Series(sm[:, 1] > 0.5, index=x.index).shift(1).loc[turb.index].astype(bool)
     f = m.loc[turb.index]
     res = {"days": f"{len(f)}, {f.index[0]:%b %Y}-{f.index[-1]:%b %Y}; turbulent at the previous "
                    f"close (real time) {turb.mean():.0%} of days"}
@@ -505,6 +525,14 @@ def report_factors(out_dir: Path) -> dict:
     up = turb & (mk > 0)
     res["momentum on real-time turbulent days when the market rose"] = (
         f"{int(up.sum())} days, {w[up].mean():+.3f}% a day")
+    wr = f["WML"]
+    cm, cs = wr[~turb].mean(), wr[~turb].std()
+    tm, ts = wr[turb].mean(), wr[turb].std()
+    sh = lambda v: float(v.mean() / v.std() * np.sqrt(PER_YEAR))  # noqa: E731
+    calm_mean = wr.where(~turb, (wr - tm) + cm)
+    calm_vol = wr.where(~turb, (wr - tm) * cs / ts + tm)
+    res["momentum always held, if turbulent days had calm days' mean / calm days' volatility"] = (
+        f"Sharpe {sh(wr):.2f}; {sh(calm_mean):.2f} / {sh(calm_vol):.2f}")
     for c in ("SMB", "HML", "WML"):
         r = f[c]
         on = r.where(~turb, 0.0)
@@ -634,8 +662,7 @@ def report_verdict(out_dir: Path) -> dict:
 
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(1, 7)))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-    ax.set_title("2020: VIX tracked the stress; the HMM flipped on and off", fontsize=10.5,
-                 loc="left")
+    ax.set_title("2020: VIX stayed high; the HMM flipped on and off", fontsize=10.5, loc="left")
     fig.suptitle("For the reference model the HMM regime added nothing to India VIX", x=0.01, ha="left",
                  fontweight="bold")
     fig.tight_layout()

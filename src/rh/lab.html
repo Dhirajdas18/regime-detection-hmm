@@ -4,7 +4,7 @@
     <label>To <select id="rh-to"></select></label>
     <label>States <select id="rh-k"><option value="2">2</option><option value="3">3</option></select></label>
     <label>Probability <select id="rh-view">
-      <option value="filt">Real time (filtered)</option>
+      <option value="filt">Filtered (past days only)</option>
       <option value="smooth">With hindsight (smoothed)</option>
     </select></label>
   </div>
@@ -12,9 +12,11 @@
 <p class="note" id="rh-status" aria-live="polite"></p>
 <h3>The market and its turbulent state</h3>
 <p class="note">How to read it: the top line is ₹1 in the Indian market; the shaded line below is
-the chance that the market was in its most volatile state that day. Real time uses only the days
-up to each date, which is all an investor could have known; with hindsight uses the whole period,
-including the future, so it looks sharper than anything usable in practice.</p>
+the chance that the market was in its most volatile state that day. Filtered uses only the days
+up to each date, but with a model fitted on all the years you picked, so it still knows each
+state’s volatility in advance; with hindsight also uses the days after each date, so it looks
+sharper still. Neither is what an investor could have known: that needs the model refitted on past
+days only (see the repository).</p>
 <div id="rh-chart" class="sim-chart tall" role="img" aria-label="Growth of one rupee in the Indian market with the probability of the turbulent state below it"></div>
 <h3>The states</h3>
 <p class="note">How to read it: each state’s average return and volatility a year, how many days
@@ -53,6 +55,7 @@ $js
     setTimeout(() => {
       if (my !== seq) return;
       const x = idx.map((i) => D.r[i]), dates = idx.map((i) => D.dates[i]), K = +el("rh-k").value;
+      const perYear = x.length / ((Date.parse(dates[dates.length - 1]) - Date.parse(dates[0])) / 864e5 / 365.25);
       const p = RH.fit(x, K);
       const prob = el("rh-view").value === "filt" ? RH.forward(x, p).alpha : RH.smooth(x, p).gamma;
       let w = 1;
@@ -74,12 +77,21 @@ $js
         for (let n = 0; n < 2000; n++) v = v.map((_, j) => v.reduce((s, vi, i) => s + vi * p.A[i][j], 0));
         return v;
       })();
-      el("rh-table").tBodies[0].innerHTML = NAMES[K].map((nm, k) => `<tr><td>${nm}</td><td>${pct(p.mu[k] * 250, 0)}</td><td>${(p.sd[k] * Math.sqrt(250)).toFixed(1)}%</td><td>${(1 / (1 - p.A[k][k])).toFixed(0)}</td><td>${(100 * P[k]).toFixed(0)}%</td></tr>`).join("");
+      el("rh-table").tBodies[0].innerHTML = NAMES[K].map((nm, k) => `<tr><td>${nm}</td><td>${pct(p.mu[k] * perYear, 0)}</td><td>${(p.sd[k] * Math.sqrt(perYear)).toFixed(1)}%</td><td>${(1 / (1 - p.A[k][k])).toFixed(0)}</td><td>${(100 * P[k]).toFixed(0)}%</td></tr>`).join("");
       el("rh-trans").tHead.innerHTML = `<tr><th>From \\ to</th>${NAMES[K].map((n) => `<th>${n}</th>`).join("")}</tr>`;
       el("rh-trans").tBodies[0].innerHTML = NAMES[K].map((nm, i) => `<tr><td>${nm}</td>${p.A[i].map((v) => `<td>${(100 * v).toFixed(1)}%</td>`).join("")}</tr>`).join("");
     }, 20);
   }
   ["rh-from", "rh-to", "rh-k", "rh-view"].forEach((id) => el(id).addEventListener("change", () => { save(); draw(); }));
+  addEventListener("hashchange", () => {  // back, forward or a pasted link on an open page
+    const g = new URLSearchParams(location.hash.slice(1));
+    if (!g.has("k")) return;  // a section link, not lab state
+    if (years.includes(g.get("from"))) el("rh-from").value = g.get("from");
+    if (years.includes(g.get("to"))) el("rh-to").value = g.get("to");
+    if (["2", "3"].includes(g.get("k"))) el("rh-k").value = g.get("k");
+    if (["filt", "smooth"].includes(g.get("view"))) el("rh-view").value = g.get("view");
+    draw();
+  });
   draw();
 })();
 </script>

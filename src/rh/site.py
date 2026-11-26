@@ -38,15 +38,17 @@ def lab_section(d: dict) -> str:
 def method_section(_: dict) -> str:
     return """<ul class="plain">
 <li>Returns: IIMA’s daily market return as a log return in percent. Annual figures multiply daily
-means by 250 and daily volatility by √250.</li>
+means by the period’s trading days a year (about 248) and daily volatility by its square
+root.</li>
 <li>Model: a Gaussian hidden Markov model with two or three states, each with its own mean and
 volatility and a fixed chance of switching each day, fitted by expectation-maximisation
 (Baum-Welch) from a start that splits days by the size of their moves. States are sorted by
 volatility, so the last is always the most turbulent. The page uses one start; the findings in
 the repository use several.</li>
-<li>Real time (filtered) probabilities use only the days up to each date, given the fitted model;
-with hindsight (smoothed) probabilities use every day in the period. Both use a model fitted on
-the whole period, so even the real-time line knows the states’ volatilities in advance.</li>
+<li>Filtered probabilities use only the days up to each date, given the fitted model; smoothed
+(hindsight) probabilities use every day in the period. Both use a model fitted on the whole period
+you pick, so even the filtered line knows the states’ volatilities in advance; the repository’s
+finding 2 shows the truly real-time version, refitted each year on past days only.</li>
 <li>Research only, not investment advice.</li>
 </ul>"""
 
