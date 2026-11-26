@@ -56,3 +56,16 @@ def test_realtime_probabilities_never_use_later_days():
     n = k - start
     assert np.allclose(a["probs"][:n], b["probs"][:n])
     assert not np.allclose(a["probs"][n:], b["probs"][n:])
+
+
+def test_logscore_is_the_predictive_density_of_each_day():
+    import pandas as pd
+
+    x, *_ = _sim(800, 5)
+    dates = pd.bdate_range("2000-01-03", periods=800)
+    rt = hmm.realtime(x, dates, 1, first="2000-12-29", restarts=1)
+    # one state = a normal with the past mean and sd: the score is its log density
+    n = int(np.searchsorted(dates, pd.Timestamp("2000-12-29"), side="right"))
+    p = hmm.fit(x[:n], 1, restarts=1)
+    z = (x[n] - p["mu"][0]) / p["sd"][0]
+    assert np.isclose(rt["logscore"][0], -0.5 * z * z - np.log(p["sd"][0] * np.sqrt(2 * np.pi)))

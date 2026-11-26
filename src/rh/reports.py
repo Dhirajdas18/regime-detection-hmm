@@ -201,7 +201,99 @@ def report_lookahead(out_dir: Path) -> dict:
     return res
 
 
+def nw_se_mean(e: np.ndarray, lags: int = 20) -> float:
+    """Newey-West standard error of the mean of a daily series."""
+    e = e - e.mean()
+    n = len(e)
+    s = e @ e / n
+    for k in range(1, lags + 1):
+        s += 2 * (1 - k / (lags + 1)) * (e[k:] @ e[:-k] / n)
+    return float(np.sqrt(s / n))
+
+
+def report_states_count(out_dir: Path) -> dict:
+    """How many states? In-sample BIC and AIC for 1-5 states on 1993-2025; out of sample, each
+    day's predictive log density from 1999 with the model refitted at each year-end on past days
+    only (1-4 states; 1 state = constant volatility), the gain from each added state with a
+    Newey-West t (20 lags) and the share of years it helped; and how far each state's volatility
+    moved across the yearly refits, including four-state fits with a near-flat state."""
+    from rh import hmm
+
+    x = market()
+    X = x.to_numpy()
+    res = {}
+    for K in range(1, 6):
+        p = hmm.fit(X, K)
+        res[f"in-sample, {K} state{'s' if K > 1 else ''}"] = (
+            f"log-likelihood {p['ll']:.0f}, BIC {hmm.bic(p['ll'], K, len(X)):.0f}, AIC "
+            f"{2 * hmm.n_params(K) - 2 * p['ll']:.0f}")
+    rts = {K: hmm.realtime(X, x.index, K) for K in range(1, 5)}
+    dates = rts[1]["dates"]
+    res["out of sample"] = f"{len(dates)} days, {dates[0]:%b %Y}-{dates[-1]:%b %Y}"
+    gains = {}
+    for K in range(1, 5):
+        res[f"  {K} state{'s' if K > 1 else ''}"] = (
+            f"mean daily log score {rts[K]['logscore'].mean():.4f}")
+    for a, b in ((1, 2), (2, 3), (3, 4)):
+        diff = rts[b]["logscore"] - rts[a]["logscore"]
+        t = diff.mean() / nw_se_mean(diff)
+        yr = pd.Series(diff, index=dates).groupby(dates.year).sum()
+        gains[b] = (diff.mean(), t, (yr > 0).mean())
+        res[f"  {b} states against {a}"] = (f"+{diff.mean():.4f} a day (t {t:.2f}); better in "
+                                             f"{(yr > 0).mean():.0%} of {len(yr)} years")
+    vols = {}
+    for K in (2, 3, 4):
+        v = np.array([f["sd"] for f in rts[K]["fits"].values()]) * np.sqrt(PER_YEAR)
+        vols[K] = v
+        res[f"{K} states, volatility range across {len(v)} refits"] = ", ".join(
+            f"state {k + 1} {v[:, k].min():.0f}-{v[:, k].max():.0f}%" for k in range(K))
+    flat = [(e, f) for e, f in rts[4]["fits"].items() if f["sd"][0] * np.sqrt(PER_YEAR) < 5]
+    res["  four-state refits with a near-flat state (volatility under 5% a year)"] = (
+        f"{len(flat)} of {len(rts[4]['fits'])}; its volatility "
+        f"{min(f['sd'][0] for _, f in flat) * np.sqrt(PER_YEAR):.1f}-"
+        f"{max(f['sd'][0] for _, f in flat) * np.sqrt(PER_YEAR):.1f}% a year, chance of staying "
+        f"{min(f['A'][0, 0] for _, f in flat):.2f}-{max(f['A'][0, 0] for _, f in flat):.2f}"
+        if flat else "none")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
+    ax = axes[0]
+    ks = [2, 3, 4]
+    v = [gains[k][0] for k in ks]
+    bars = ax.bar([f"{k - 1} to {k}" for k in ks], v, color=plots.SERIES[0], width=0.55)
+    for b_, k in zip(bars, ks, strict=True):
+        ax.annotate(f"t {gains[k][1]:.1f}\nbetter in {gains[k][2]:.0%} of years",
+                    (b_.get_x() + b_.get_width() / 2, b_.get_height()), xytext=(0, 3),
+                    textcoords="offset points", ha="center", fontsize=8.5, color=plots.TEXT)
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(lambda v, _: f"{v:g}")
+    ax.yaxis.set_minor_formatter(lambda v, _: "")
+    ax.set_ylabel("gain in daily predictive log score,\nout of sample 1999-2025")
+    ax.set_xlabel("states")
+    ax.margins(y=0.3)
+    ax.set_title("Each extra state helped less", fontsize=10.5, loc="left")
+    ax = axes[1]
+    ends = list(rts[4]["fits"])
+    for k, col in zip(range(3), (plots.SERIES[0], plots.SERIES[3], plots.SERIES[1]), strict=True):
+        ax.plot(ends, vols[3][:, k], color=col, lw=2, label=f"3 states: state {k + 1}")
+    ax.plot(ends, vols[4][:, 0], color=plots.TEXT_2, lw=1.4, ls="--",
+            label="4 states: calmest state")
+    ax.set_yscale("log")
+    ax.set_yticks([0.3, 1, 3, 10, 30])
+    ax.set_yticklabels(["0.3%", "1%", "3%", "10%", "30%"])
+    ax.set_ylabel("state's volatility a year, as refitted")
+    ax.set_xlabel("refit at year-end")
+    ax.legend(frameon=False, fontsize=8.5, loc="lower left")
+    ax.set_title("A fourth state was often a one-day quirk", fontsize=10.5, loc="left")
+    fig.suptitle("Three states beat two out of sample in most years; a fourth added little",
+                 x=0.01, ha="left", fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "count")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
     "lookahead": report_lookahead,
+    "count": report_states_count,
 }

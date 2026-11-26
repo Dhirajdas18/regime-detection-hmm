@@ -17,7 +17,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 
 - [x] Two and three states on daily market returns: their returns, volatility and persistence
 - [x] The look-ahead trap: real-time (filtered) against hindsight (smoothed, Viterbi) states
-- [ ] How many states, and do they keep their meaning across refits, out of sample
+- [x] How many states, and do they keep their meaning across refits, out of sample
 - [ ] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
 - [ ] Regime-switching between stocks and cash after costs, against volatility targeting and trend
 - [ ] Size, value and momentum by regime, out of sample
@@ -76,12 +76,36 @@ them); Sharpe ratios are measured above the risk-free rate.
 - **The model itself barely changed.** Refitted every year, its turbulent state's volatility ranged
   from 32% to 41% a year.
 
+### 3. Three states beat two out of sample in most years; a fourth added little
+
+<a href="docs/img/count.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/count.png"><img src="docs/img/count.gif" alt="Out-of-sample gain in daily predictive log score from each added state, and each state's volatility across yearly refits for three states and the calmest of four" width="720"></picture></a>
+
+In sample, the information criteria BIC and AIC for 1 to 5 states fitted on 1993–2025. Out of
+sample, finding 2's real-time scheme for 1 to 4 states: the model refitted at each year-end on
+past days only, then each day from January 1999 to December 2025 (6,720 days) scored by the
+log of the density the model gave that day's return before seeing it (higher is better; one state
+is a constant-volatility normal). Each added state's daily gain gets a Newey-West t (20 lags) and
+the share of the 27 years in which it helped. The refits also show how far each state's volatility
+moved from year to year.
+
+- **More states always fitted better in sample.** BIC fell from 27,644 (one state) to 24,928, 24,546,
+  24,431 and 24,352 (five), so it never chose a number.
+- **Two states were a big step out of sample, three a real one, four marginal.** Two beat one by
+  0.194 a day (t 13.25) in all 27 years; three beat two by 0.025 (t 7.85) in 93% of years; four beat
+  three by 0.008 (t 3.14) in only 52% of years.
+- **The fourth state was often not a regime.** In 11 of 27 refits the four-state model's calmest
+  state had a volatility of 0.3–3.0% a year and a chance of staying of 0.08–0.59 a day: it was
+  absorbing the many very small daily moves, a quirk of the return distribution, not a market mood.
+- **Two states were the most stable.** Across refits the calm state's volatility ran 13–17% and the
+  turbulent 32–41%; with three states the middle state ran 12–27%, close to the calm one before
+  2004.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
-uv run rh report states               # topics: states, lookahead
+uv run rh report states               # topics: states, lookahead, count
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```
