@@ -94,7 +94,8 @@ The data files are downloaded, not committed.
   adjusted daily and monthly files.
 - `src/rh/hmm.py`: the Gaussian hidden Markov model: scaled forward and backward passes, filtered
   and smoothed probabilities, Viterbi, Baum-Welch from several starts with states sorted by
-  volatility, BIC; checked against hmmlearn in the tests.
+  volatility, BIC, and real-time probabilities refitted each year-end; checked against hmmlearn in
+  the tests.
 - `src/rh/rh.js`: the lab's browser copy of the fit and the filter, tested against Python through
   Node.
 - `src/rh/site.py`: the regime lab, one static Plotly page carrying the daily market returns.
