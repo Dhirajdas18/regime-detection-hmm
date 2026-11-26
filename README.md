@@ -18,7 +18,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 - [x] Two and three states on daily market returns: their returns, volatility and persistence
 - [x] The look-ahead trap: real-time (filtered) against hindsight (smoothed, Viterbi) states
 - [x] How many states, and do they keep their meaning across refits, out of sample
-- [ ] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
+- [x] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
 - [ ] Regime-switching between stocks and cash after costs, against volatility targeting and trend
 - [ ] Size, value and momentum by regime, out of sample
 - [ ] Verdict: does an HMM regime earn a place next to the reference model's current risk inputs
@@ -100,17 +100,44 @@ moved from year to year.
   turbulent 32–41%; with three states the middle state ran 12–27%, close to the calm one before
   2004.
 
+### 4. The regime model forecast volatility worse than GJR-GARCH and India VIX
+
+<a href="docs/img/forecast.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/forecast.png"><img src="docs/img/forecast.gif" alt="QLIKE loss of HMM, EWMA, 20-day and India VIX variance forecasts against GJR-GARCH, and their 1% VaR breach rates, on IIMA's market 1999-2025 and NIFTY 2015-2026" width="720"></picture></a>
+
+Each day's variance and 1% value at risk forecast from data before it: the two-state HMM refitted
+at each year-end (its forecast is a mixture of the states' normals, weighted by tomorrow's state
+chances from today's filtered ones), EWMA (λ 0.94), the 20-day standard deviation, and
+GJR-GARCH(1,1) with Student-t shocks refitted at each year-end (the volatility model the reference model uses
+now). Two samples: IIMA's market, January 1999 to December 2025 (6,720 days), and NIFTY's daily
+return from the NSE archive, January 2015 to November 2026 (2,927 days with India VIX), where the
+HMM and GJR are first fitted on 2013–2014 and India VIX at the previous close gives a variance
+forecast (VIX² / 250). Forecasts are scored by QLIKE (lower is better; Newey-West t with 20 lags
+on the daily difference from GJR) and VaR by the share of days breached, against 1%, with the
+Kupiec test (above 3.84 rejects at 5%). EWMA, 20-day and VIX VaR assume normal returns.
+
+- **GJR-GARCH forecast variance best.** On IIMA's market its QLIKE was 1.206 against 1.244 for
+  EWMA (t 2.88), 1.300 for the HMM (t 7.46) and 1.312 for the 20-day standard deviation (t 5.98).
+- **On NIFTY, India VIX was as good as GJR; the HMM wasn't.** QLIKE 0.725 for GJR, 0.744 for VIX (t
+  0.86 against GJR), 0.759 for EWMA (t 2.04) and 0.888 for the HMM (t 1.79).
+- **The HMM's VaR was well calibrated on the long history, not on NIFTY.** Its two-state mixture's
+  fat tails gave 1.19% breaches on IIMA's market (Kupiec 2.3, not rejected; GJR 1.32%, rejected at
+  6.5), but 1.64% on NIFTY (rejected, 10.1), with its first fit on only two years.
+- **India VIX gave the best-calibrated VaR on NIFTY.** 1.06% breaches (Kupiec 0.1); GJR 1.33% (3.0,
+  not rejected); EWMA 1.95% and the 20-day rule 2.74% (on IIMA) breached far too often.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
-uv run rh report states               # topics: states, lookahead, count
+uv run rh report states               # topics: states, lookahead, count,
+                                      # forecast
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```
 
-The data files are downloaded, not committed.
+The data files are downloaded, not committed. The NIFTY comparison reads NIFTY and India VIX from a
+local NSE archive (`RH_LAKE_DIR`, default `/path/to/lake`).
 
 ## Design
 
@@ -120,6 +147,9 @@ The data files are downloaded, not committed.
   and smoothed probabilities, Viterbi, Baum-Welch from several starts with states sorted by
   volatility, BIC, and real-time probabilities refitted each year-end; checked against hmmlearn in
   the tests.
+- `src/rh/forecast.py`: one-day-ahead variance and 1% VaR from the HMM, EWMA, the 20-day standard
+  deviation and GJR-GARCH-t (arch), each refitted on past data only; QLIKE and the Kupiec test.
+- `src/rh/lake.py`: NIFTY and India VIX from the local NSE archive.
 - `src/rh/rh.js`: the lab's browser copy of the fit and the filter, tested against Python through
   Node.
 - `src/rh/site.py`: the regime lab, one static Plotly page carrying the daily market returns.

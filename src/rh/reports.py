@@ -292,8 +292,88 @@ def report_states_count(out_dir: Path) -> dict:
     return res
 
 
+def report_forecast(out_dir: Path) -> dict:
+    """Does the regime improve risk forecasts? One-day-ahead variance and 1% VaR from data before
+    each day (rh.forecast): the two-state HMM refitted each year-end, EWMA (0.94), the 20-day
+    standard deviation and GJR-GARCH(1,1)-t refitted each year-end. (A) IIMA's market, 1999-2025.
+    (B) NIFTY from the NSE bhavcopy archive, 2015-2026, adding India VIX at the previous close as a
+    variance forecast (VIX² / 250). Scored by QLIKE (Newey-West t, 20 lags, of the difference
+    from GJR) and 1% VaR breach rates with the Kupiec test (5% critical value 3.84); EWMA, 20-day
+    and VIX VaR assume normal returns, the HMM uses its mixture, GJR its t."""
+    from rh import forecast as F
+    from rh import lake
+
+    def score(r, fc, var):
+        out, base = {}, F.qlike(r.to_numpy() ** 2 + 1e-12, fc["GJR-t"].to_numpy())
+        for k, v in fc.items():
+            L = F.qlike(r.to_numpy() ** 2 + 1e-12, v.to_numpy())
+            d = L - base
+            t = d.mean() / nw_se_mean(d) if k != "GJR-t" else float("nan")
+            b = (r < var[k]).to_numpy()
+            out[k] = (L.mean(), d.mean(), t, b.mean(), F.kupiec(b))
+        return out
+
+    x = market()
+    h, g, e = F.hmm_forecasts(x), F.gjr(x), F.ewma(x)
+    s20 = x.rolling(20).var().shift(1)
+    idx = h.index.intersection(g.index)
+    r = x.loc[idx]
+    A = score(r, {"HMM": h.loc[idx, "var"], "GJR-t": g.loc[idx, "var"], "EWMA": e.loc[idx],
+                  "20-day": s20.loc[idx]},
+              {"HMM": h.loc[idx, "VaR"], "GJR-t": g.loc[idx, "VaR"],
+               "EWMA": -2.3263 * np.sqrt(e.loc[idx]), "20-day": -2.3263 * np.sqrt(s20.loc[idx])})
+    res = {"A: IIMA market": f"{len(idx)} days, {idx[0]:%b %Y}-{idx[-1]:%b %Y}"}
+    for k, (ql, d, t, br, ku) in A.items():
+        res[f"  {k}"] = (f"QLIKE {ql:.4f}" + (f" ({d:+.4f} against GJR-t, t {t:.2f})"
+                                              if k != "GJR-t" else "")
+                         + f"; 1% VaR breached on {br:.2%} of days (Kupiec {ku:.1f})")
+    m = lake.nifty_vix()
+    xn = m["r"]
+    hn, gn, en = F.hmm_forecasts(xn, first="2014-12-31"), F.gjr(xn, first="2014-12-31"), F.ewma(xn)
+    vixv = (m["vix"].shift(1) ** 2 / PER_YEAR).dropna()
+    idn = hn.index.intersection(gn.index).intersection(vixv.index)
+    rn = xn.loc[idn]
+    B = score(rn, {"HMM": hn.loc[idn, "var"], "GJR-t": gn.loc[idn, "var"], "EWMA": en.loc[idn],
+                   "India VIX": vixv.loc[idn]},
+              {"HMM": hn.loc[idn, "VaR"], "GJR-t": gn.loc[idn, "VaR"],
+               "EWMA": -2.3263 * np.sqrt(en.loc[idn]),
+               "India VIX": -2.3263 * np.sqrt(vixv.loc[idn])})
+    res["B: NIFTY"] = (f"{len(idn)} days with India VIX, {idn[0]:%b %Y}-{idn[-1]:%b %Y}; HMM "
+                       "and GJR first fitted on 2013-2014")
+    for k, (ql, d, t, br, ku) in B.items():
+        res[f"  {k} "] = (f"QLIKE {ql:.4f}" + (f" ({d:+.4f} against GJR-t, t {t:.2f})"
+                                               if k != "GJR-t" else "")
+                          + f"; 1% VaR breached on {br:.2%} of days (Kupiec {ku:.1f})")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
+    for ax, data_, title in ((axes[0], (A, B), "QLIKE against GJR-t (above 0 = worse)"),
+                             (axes[1], (A, B), "1% VaR: share of days breached")):
+        labels = ["HMM", "EWMA", "20-day", "India VIX", "GJR-t"]
+        x_ = np.arange(len(labels))
+        for i, (dd, nm, col) in enumerate(zip(data_, ("IIMA market 1999-2025", "NIFTY 2015-2026"),
+                                              (plots.MUTED, plots.SERIES[0]), strict=True)):
+            pos = [j for j, k in enumerate(labels) if k in dd]
+            vals = [dd[labels[j]][1] if ax is axes[0] else 100 * dd[labels[j]][3] for j in pos]
+            ax.bar(x_[pos] + (i - 0.5) * 0.38, vals, 0.36, color=col, label=nm)
+        ax.set_xticks(x_, labels, fontsize=9)
+        ax.set_title(title, fontsize=10.5, loc="left")
+        ax.legend(frameon=False, fontsize=8.5, loc="upper right")
+    axes[0].axhline(0, color=plots.TEXT_2, lw=0.8)
+    axes[0].set_ylabel("QLIKE difference from GJR-t")
+    axes[1].axhline(1, color=plots.TEXT_2, lw=1, ls="--")
+    axes[1].text(4.45, 1.03, "1% target", fontsize=8.5, color=plots.TEXT_2, ha="right")
+    axes[1].set_ylabel("% of days")
+    fig.suptitle("The regime model forecast volatility worse than GJR-GARCH and India VIX",
+                 x=0.01, ha="left", fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "forecast")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
     "lookahead": report_lookahead,
     "count": report_states_count,
+    "forecast": report_forecast,
 }
