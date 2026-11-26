@@ -1,0 +1,42 @@
+[project]
+name = "regime-detection-hmm"
+version = "0.1.0"
+description = "Hidden Markov model regime detection on Indian equities, 1993-2026: calm and turbulent states, the look-ahead trap in smoothed labels, how many states, volatility and VaR forecasts, regime-switching allocation after costs, factors by regime, with a live in-browser HMM lab."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Dhirajdas18" }]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.5",
+    "pandas>=3.1.1",
+    "pillow>=13.0.0",
+    "pyarrow>=26.0.1",
+    "scipy>=1.18.1",
+]
+
+[project.scripts]
+rh = "rh.cli:main"
+
+[dependency-groups]
+dev = [
+    "hmmlearn",
+    "pytest",
+    "ruff",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "rh"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

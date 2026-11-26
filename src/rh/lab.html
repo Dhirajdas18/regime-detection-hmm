@@ -1,0 +1,85 @@
+<div class="calc">
+  <div class="calc-controls">
+    <label>From <select id="rh-from"></select></label>
+    <label>To <select id="rh-to"></select></label>
+    <label>States <select id="rh-k"><option value="2">2</option><option value="3">3</option></select></label>
+    <label>Probability <select id="rh-view">
+      <option value="filt">Real time (filtered)</option>
+      <option value="smooth">With hindsight (smoothed)</option>
+    </select></label>
+  </div>
+</div>
+<p class="note" id="rh-status" aria-live="polite"></p>
+<h3>The market and its turbulent state</h3>
+<p class="note">How to read it: the top line is ₹1 in the Indian market; the shaded line below is
+the chance that the market was in its most volatile state that day. Real time uses only the days
+up to each date, which is all an investor could have known; with hindsight uses the whole period,
+including the future, so it looks sharper than anything usable in practice.</p>
+<div id="rh-chart" class="sim-chart tall" role="img" aria-label="Growth of one rupee in the Indian market with the probability of the turbulent state below it"></div>
+<h3>The states</h3>
+<p class="note">How to read it: each state’s average return and volatility a year, how many days
+it lasts on average, and its share of days. The fitted model is from the years you picked, so
+these numbers describe those years, with hindsight.</p>
+<div class="table-scroll"><table class="data compact" id="rh-table"><thead><tr><th>State</th><th>Average a year</th><th>Volatility a year</th><th>Lasts, days</th><th>Share of days</th></tr></thead><tbody></tbody></table></div>
+<h3>Transition matrix</h3>
+<p class="note">How to read it: the chance of moving from the row’s state today to the column’s
+state tomorrow. Large numbers on the diagonal mean states persist.</p>
+<div class="table-scroll"><table class="data compact" id="rh-trans"><thead></thead><tbody></tbody></table></div>
+<script>
+$js
+(() => {
+  const D = $data;
+  const el = (id) => document.getElementById(id);
+  const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+  const cfg = { displaylogo: false, responsive: true };
+  const NAMES = { 2: ["calm", "turbulent"], 3: ["calm", "middle", "turbulent"] };
+  const years = [...new Set(D.dates.map((d) => d.slice(0, 4)))];
+  for (const id of ["rh-from", "rh-to"]) el(id).innerHTML = years.map((y) => `<option>${y}</option>`).join("");
+  const h = new URLSearchParams(location.hash.slice(1));
+  el("rh-from").value = years.includes(h.get("from")) ? h.get("from") : years[0];
+  el("rh-to").value = years.includes(h.get("to")) ? h.get("to") : years[years.length - 1];
+  if (["2", "3"].includes(h.get("k"))) el("rh-k").value = h.get("k");
+  if (["filt", "smooth"].includes(h.get("view"))) el("rh-view").value = h.get("view");
+  const save = () => history.replaceState(null, "", "#" + new URLSearchParams({ from: el("rh-from").value, to: el("rh-to").value, k: el("rh-k").value, view: el("rh-view").value }));
+  const pct = (v, dp = 1) => (v < 0 ? "−" : v > 0 ? "+" : "") + Math.abs(v).toFixed(dp) + "%";
+  let seq = 0;
+  function draw() {
+    const my = ++seq;
+    let a = el("rh-from").value, b = el("rh-to").value;
+    if (a > b) [a, b] = [b, a];
+    const idx = D.dates.map((d, i) => i).filter((i) => D.dates[i].slice(0, 4) >= a && D.dates[i].slice(0, 4) <= b);
+    if (idx.length < 250) { el("rh-status").textContent = "Pick at least a year."; return; }
+    el("rh-status").textContent = "Fitting the model…";
+    setTimeout(() => {
+      if (my !== seq) return;
+      const x = idx.map((i) => D.r[i]), dates = idx.map((i) => D.dates[i]), K = +el("rh-k").value;
+      const p = RH.fit(x, K);
+      const prob = el("rh-view").value === "filt" ? RH.forward(x, p).alpha : RH.smooth(x, p).gamma;
+      let w = 1;
+      const wealth = x.map((v) => (w *= Math.exp(v / 100)));
+      const top = prob.map((r) => r[K - 1]);
+      el("rh-status").textContent = `${x.length} trading days, ${dates[0]} to ${dates[dates.length - 1]}; fitted in ${p.iters} iterations.`;
+      Plotly.react("rh-chart", [
+        { x: dates, y: wealth, name: "₹1 in the market", mode: "lines", line: { color: css("--text"), width: 1.3 }, yaxis: "y", hovertemplate: "₹%{y:.2f} on %{x|%d %b %Y}<extra></extra>" },
+        { x: dates, y: top, name: "chance of the turbulent state", mode: "lines", fill: "tozeroy", line: { color: css("--accent-2"), width: 1 }, yaxis: "y2", hovertemplate: "%{y:.0%} on %{x|%d %b %Y}<extra></extra>" },
+      ], { paper_bgcolor: css("--surface"), plot_bgcolor: css("--surface"), showlegend: false,
+        font: { family: getComputedStyle(document.body).fontFamily, color: css("--text-2"), size: 12 },
+        margin: { l: 64, r: 16, t: 16, b: 40 }, hovermode: "x unified",
+        yaxis: { domain: [0.38, 1], type: "log", title: { text: "₹1 in the market" }, gridcolor: css("--grid"),
+          tickvals: [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100], ticktext: ["₹0.1", "₹0.2", "₹0.5", "₹1", "₹2", "₹5", "₹10", "₹20", "₹50", "₹100"] },
+        yaxis2: { domain: [0, 0.3], range: [0, 1], title: { text: "turbulent" }, gridcolor: css("--grid"), tickformat: ".0%" },
+        xaxis: { gridcolor: css("--grid") } }, cfg);
+      const P = (() => { // stationary shares by power iteration
+        let v = new Array(K).fill(1 / K);
+        for (let n = 0; n < 2000; n++) v = v.map((_, j) => v.reduce((s, vi, i) => s + vi * p.A[i][j], 0));
+        return v;
+      })();
+      el("rh-table").tBodies[0].innerHTML = NAMES[K].map((nm, k) => `<tr><td>${nm}</td><td>${pct(p.mu[k] * 250, 0)}</td><td>${(p.sd[k] * Math.sqrt(250)).toFixed(1)}%</td><td>${(1 / (1 - p.A[k][k])).toFixed(0)}</td><td>${(100 * P[k]).toFixed(0)}%</td></tr>`).join("");
+      el("rh-trans").tHead.innerHTML = `<tr><th>From \\ to</th>${NAMES[K].map((n) => `<th>${n}</th>`).join("")}</tr>`;
+      el("rh-trans").tBodies[0].innerHTML = NAMES[K].map((nm, i) => `<tr><td>${nm}</td>${p.A[i].map((v) => `<td>${(100 * v).toFixed(1)}%</td>`).join("")}</tr>`).join("");
+    }, 20);
+  }
+  ["rh-from", "rh-to", "rh-k", "rh-view"].forEach((id) => el(id).addEventListener("change", () => { save(); draw(); }));
+  draw();
+})();
+</script>
