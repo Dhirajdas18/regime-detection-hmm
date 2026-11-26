@@ -371,9 +371,90 @@ def report_forecast(out_dir: Path) -> dict:
     return res
 
 
+def report_allocate(out_dir: Path) -> dict:
+    """Stocks or cash by regime, after costs (rh.allocate), IIMA's market 1999-2025, every rule
+    deciding at a close from data up to it: buy and hold; HMM switch (cash when the real-time
+    turbulent chance is above 50%); HMM with a band (cash above 70%, back below 30%, fixed in
+    advance); HMM scaled (weight = calm chance, traded when it moves over 0.1); volatility target
+    (GJR forecast refitted yearly, target = the 1993-1998 volatility, no leverage, traded when the
+    weight moves over 0.1); and the 200-day trend (in the market when above its 200-day average).
+    Sharpe ratios above cash, net and gross of costs, by half."""
+    from rh import allocate as Al
+    from rh import data, hmm
+    from rh import forecast as F
+
+    x = market()
+    m = data.factors("daily")
+    rt = hmm.realtime(x.to_numpy(), x.index, 2)
+    idx = rt["dates"]
+    pt = pd.Series(rt["probs"][:, 1], index=idx)
+    mkt, rf = m["MARKET"].loc[idx], m["RF"].loc[idx]
+    target = x.loc[:"1998"].std()
+    volw = (target / np.sqrt(F.gjr(x)["var"].reindex(idx))).clip(upper=1)
+    lvl = np.exp(x.cumsum() / 100)
+    trend = (lvl > lvl.rolling(200).mean()).astype(float).reindex(idx)
+    rules = {"buy and hold": pd.Series(1.0, index=idx),
+             "HMM switch (50%)": (pt <= 0.5).astype(float),
+             "HMM band (70/30)": Al.band(pt),
+             "HMM scaled": Al.sticky(1 - pt),
+             "volatility target (GJR)": Al.sticky(volw),
+             "200-day trend": trend}
+    res = {"scored": f"{len(idx)} days, {idx[0]:%b %Y}-{idx[-1]:%b %Y}; volatility target "
+                     f"{target * np.sqrt(PER_YEAR):.1f}% a year (1993-1998)"}
+    out, curves = {}, {}
+    for k, w in rules.items():
+        r = Al.run(w, mkt, rf)
+        s_, sg = Al.stats(r["net"], rf, r["traded"]), Al.stats(r["gross"], rf)
+        h1 = Al.stats(r["net"].loc[:"2012"], rf.loc[:"2012"])
+        h2 = Al.stats(r["net"].loc["2013":], rf.loc["2013":])
+        out[k] = (s_["sharpe"], sg["sharpe"])
+        curves[k] = np.exp(np.log1p(r["net"]).cumsum())
+        res[k] = (f"compounded {s_['cagr']:+.1%} a year after costs, volatility {s_['vol']:.1%}, "
+                  f"Sharpe {s_['sharpe']:.2f} ({sg['sharpe']:.2f} before costs), worst fall "
+                  f"{s_['dd']:.0%}; traded {s_['turnover']:.1f}x a year, costs "
+                  f"{r['cost'].sum() / (len(r) / PER_YEAR):.2%} a year, in the market "
+                  f"{r['weight'].mean():.0%}; Sharpe 1999-2012 {h1['sharpe']:.2f}, 2013-2025 "
+                  f"{h2['sharpe']:.2f}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={"width_ratios": [1.4, 1]})
+    ax = axes[0]
+    show = {"buy and hold": plots.TEXT, "HMM band (70/30)": plots.SERIES[1],
+            "volatility target (GJR)": plots.SERIES[0], "200-day trend": plots.SERIES[2]}
+    for k, col in show.items():
+        ax.plot(curves[k].index, curves[k], color=col, lw=1.6 if k != "buy and hold" else 1.2,
+                label=k)
+    ax.legend(frameon=False, fontsize=8.5, loc="upper left")
+    ax.set_yscale("log")
+    ax.yaxis.set_major_formatter(lambda v, _: f"₹{v:g}")
+    ax.set_ylabel("₹1 from 1999, after costs")
+    ax.set_title("Growth after costs", fontsize=10.5, loc="left")
+    ax = axes[1]
+    keys = list(rules)
+    y = np.arange(len(keys))[::-1]
+    ax.barh(y + 0.18, [out[k][1] for k in keys], 0.34, color=plots.GRID, label="before costs")
+    ax.barh(y - 0.18, [out[k][0] for k in keys], 0.34, color=plots.SERIES[0], label="after costs")
+    for yy, k in zip(y, keys, strict=True):
+        ax.text(out[k][0] + 0.01, yy - 0.18, f"{out[k][0]:.2f}", va="center", fontsize=8.5,
+                color=plots.TEXT)
+    ax.axvline(out["buy and hold"][0], color=plots.TEXT_2, lw=0.8, ls="--")
+    ax.set_yticks(y, keys, fontsize=9)
+    ax.set_xlabel("Sharpe ratio above cash, 1999-2025")
+    ax.set_xlim(0, 0.95)
+    ax.legend(frameon=False, fontsize=8.5, loc="upper right")
+    ax.set_title("Costs took the HMM rules below buy and hold", fontsize=10.5, loc="left")
+    fig.suptitle("Switching on the regime lost to buy and hold after costs; simpler rules did "
+                 "better",
+                 x=0.01, ha="left", fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "allocate")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
     "lookahead": report_lookahead,
     "count": report_states_count,
     "forecast": report_forecast,
+    "allocate": report_allocate,
 }

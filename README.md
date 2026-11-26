@@ -19,7 +19,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 - [x] The look-ahead trap: real-time (filtered) against hindsight (smoothed, Viterbi) states
 - [x] How many states, and do they keep their meaning across refits, out of sample
 - [x] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
-- [ ] Regime-switching between stocks and cash after costs, against volatility targeting and trend
+- [x] Regime-switching between stocks and cash after costs, against volatility targeting and trend
 - [ ] Size, value and momentum by regime, out of sample
 - [ ] Verdict: does an HMM regime earn a place next to the reference model's current risk inputs
 
@@ -125,13 +125,40 @@ Kupiec test (above 3.84 rejects at 5%). EWMA, 20-day and VIX VaR assume normal r
 - **India VIX gave the best-calibrated VaR on NIFTY.** 1.06% breaches (Kupiec 0.1); GJR 1.33% (3.0,
   not rejected); EWMA 1.95% and the 20-day rule 2.74% (on IIMA) breached far too often.
 
+### 5. Switching on the regime lost to buy and hold after costs; simpler rules did better
+
+<a href="docs/img/allocate.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/allocate.png"><img src="docs/img/allocate.gif" alt="Growth of one rupee after costs for buy and hold, an HMM switching rule, volatility targeting and a 200-day trend rule, 1999-2025, and each rule's Sharpe ratio before and after costs" width="720"></picture></a>
+
+Stocks-or-cash rules on IIMA's market, January 1999 to December 2025, each deciding at a day's
+close from data up to it and holding that weight the next day; cash earns IIMA's risk-free rate.
+HMM rules use finding 2's real-time turbulent chance: switch to cash above 50%; a band (cash above
+70%, back below 30%, set in advance to cut flicker); and scaled (weight equal to the calm chance,
+traded only when it moves more than 0.1). Volatility targeting holds the 1993–1998 volatility
+(21.8% a year) divided by GJR-GARCH's forecast (finding 4), capped at 1 and traded on moves over
+0.1. The 200-day trend rule holds the market when it is above its 200-day average, a standard
+setting not tuned here. Every trade pays equity delivery costs as in momentum-after-costs (STT 0.1%
+each side, stamp duty, exchange and SEBI charges with GST, 5 bp slippage); an index ETF pays less
+STT, so these are on the high side. No tax.
+
+- **Every HMM rule lost to buy and hold after costs.** Sharpe ratios above cash were 0.38 (switch),
+  0.43 (band) and 0.44 (scaled) against 0.51; before costs 0.56, 0.53 and 0.60.
+- **The HMM's flicker cost the most.** The plain switch traded its whole position 16.3 times a year,
+  paying 2.62% a year; the band halved that to 7.9 times and 1.28%; the scaled rule 2.10%.
+- **Volatility targeting and the trend rule did better than buy and hold.** Sharpe 0.62 and 0.64
+  after costs, compounding 16.5% a year each against 16.1%, with volatility of 16.7% and 15.9%
+  against 21.4%; their gains over buy and hold were not tested for significance.
+- **Lower risk was the HMM's one gain.** Worst falls were −40%, −53% and −31% against −69% for buy
+  and hold, but the trend rule's was −33% for a higher return.
+- **The HMM rules weakened in the second half.** Their Sharpe ratios fell from 0.46–0.53 in
+  1999–2012 to 0.27–0.40 in 2013–2025; volatility targeting held at 0.64 and 0.62.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
 uv run rh report states               # topics: states, lookahead, count,
-                                      # forecast
+                                      # forecast, allocate
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```
@@ -149,6 +176,8 @@ local NSE archive (`RH_LAKE_DIR`, default `/path/to/lake`).
   the tests.
 - `src/rh/forecast.py`: one-day-ahead variance and 1% VaR from the HMM, EWMA, the 20-day standard
   deviation and GJR-GARCH-t (arch), each refitted on past data only; QLIKE and the Kupiec test.
+- `src/rh/allocate.py`: stocks-or-cash rules held a day after each decision, with delivery costs,
+  a hysteresis band, a sticky weight, and summary statistics.
 - `src/rh/lake.py`: NIFTY and India VIX from the local NSE archive.
 - `src/rh/rh.js`: the lab's browser copy of the fit and the filter, tested against Python through
   Node.
