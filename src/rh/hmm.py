@@ -126,3 +126,30 @@ def stationary(A):
     vals, vecs = np.linalg.eig(A.T)
     v = np.real(vecs[:, np.argmin(np.abs(vals - 1))])
     return v / v.sum()
+
+
+def realtime(x, dates, K: int = 2, first: str = "1998-12-31", restarts: int = 2) -> dict:
+    """Truly real-time probabilities: at each year-end from `first`, refit on all days up to it,
+    then filter through the next year with those parameters (the filter itself starts from the
+    first day each time, so its state on day 1 of the year uses all earlier days). Returns the
+    filtered probabilities (rows from the day after `first`) and each year's fit."""
+    import pandas as pd
+
+    x = np.asarray(x, float)
+    dates = pd.DatetimeIndex(dates)
+    ends = [d for d in pd.Series(dates, index=dates).groupby(dates.year).max()
+            if d >= pd.Timestamp(first)]
+    probs, fits = [], {}
+    for i, e in enumerate(ends):
+        n = int(np.searchsorted(dates, e, side="right"))
+        if n >= len(x):
+            break
+        p = fit(x[:n], K, restarts=restarts)
+        fits[e] = p
+        stop = int(np.searchsorted(dates, ends[i + 1], side="right")) if i + 1 < len(ends) \
+            else len(x)
+        alpha, *_ = forward(x[:stop], p["pi"], p["A"], p["mu"], p["sd"])
+        probs.append(alpha[n:stop])
+    start = int(np.searchsorted(dates, ends[0], side="right"))
+    return {"probs": np.vstack(probs), "dates": dates[start:start + sum(len(q) for q in probs)],
+            "fits": fits}

@@ -40,3 +40,19 @@ def test_matches_hmmlearn_likelihood():
     m.fit(x[:, None])
     assert p["ll"] >= m.score(x[:, None]) - 1.0
     assert np.isclose(sorted(np.sqrt(m.covars_.ravel())), p["sd"], rtol=0.05).all()
+
+
+def test_realtime_probabilities_never_use_later_days():
+    import pandas as pd
+
+    x, *_ = _sim(1500, 3)
+    dates = pd.bdate_range("2000-01-03", periods=1500)
+    a = hmm.realtime(x, dates, 2, first="2001-12-31", restarts=1)
+    k = 1100  # change every return after day k
+    y = x.copy()
+    y[k:] = y[k:] * 3 + 0.5
+    b = hmm.realtime(y, dates, 2, first="2001-12-31", restarts=1)
+    start = int(np.searchsorted(dates, a["dates"][0]))
+    n = k - start
+    assert np.allclose(a["probs"][:n], b["probs"][:n])
+    assert not np.allclose(a["probs"][n:], b["probs"][n:])

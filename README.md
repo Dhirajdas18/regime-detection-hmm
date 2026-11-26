@@ -16,7 +16,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 ## Features
 
 - [x] Two and three states on daily market returns: their returns, volatility and persistence
-- [ ] The look-ahead trap: real-time (filtered) against hindsight (smoothed, Viterbi) states
+- [x] The look-ahead trap: real-time (filtered) against hindsight (smoothed, Viterbi) states
 - [ ] How many states, and do they keep their meaning across refits, out of sample
 - [ ] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
 - [ ] Regime-switching between stocks and cash after costs, against volatility targeting and trend
@@ -49,12 +49,39 @@ level that gives the same share of turbulent days. Annual figures use 250 tradin
   two-state model on 84% of days and gave 98 turbulent runs (median 16 days) against the model's 100
   (median 12).
 
+### 2. Hindsight labels made regime switching look three times better than it was
+
+<a href="docs/img/lookahead.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/lookahead.png"><img src="docs/img/lookahead.gif" alt="Hindsight and real-time chance of the turbulent state through 2008-2009, and the Sharpe ratio of a cash-when-turbulent rule under hindsight, filtered and real-time states against buy and hold, 1999-2025" width="720"></picture></a>
+
+The two-state model of finding 1, scored from January 1999 to December 2025 (6,720 days) in three
+ways. Hindsight: smoothed probabilities and the Viterbi path, from a model fitted on 1993–2025, so
+both the labels and the model see the future. Filtered: probabilities from only the days up to each
+date, but from that same whole-period model. Real time: the model refitted at each year-end (27
+times) on the days up to it, then filtered through the next year, so nothing after a day is used
+on that day. A state counts as turbulent above 50%. A toy rule holds the market on days after a calm
+close and cash (IIMA's risk-free rate) after a turbulent one, with no trading costs (finding 5 adds
+them); Sharpe ratios are measured above the risk-free rate.
+
+- **Hindsight looked excellent.** The toy rule's Sharpe ratio was 1.71 with smoothed states and
+  1.51 with the Viterbi path, compounding 27.6% and 25.4% a year.
+- **Real time was ordinary.** With real-time states it was 0.56 (14.4% a year, volatility 14.8%),
+  with filtered states from the whole-period model 0.55, and buy and hold 0.51 (16.1% a year,
+  volatility 21.4%): lower risk for lower return.
+- **Real time was a few days late.** It caught 29 of the 30 hindsight turbulent spells of 20 days or
+  more, a median of 3 trading days after they began (mean 4.4); 23 of its 219 turbulent runs never
+  touched a hindsight turbulent day.
+- **Real time and hindsight agreed on most days, just not the ones that matter.** Real-time states
+  matched smoothed ones on 88.5% of days and flagged 19% of days as turbulent against 28%; in
+  2008–2009 the real-time chance flickered between near 0 and near 100% while hindsight was sure.
+- **The model itself barely changed.** Refitted every year, its turbulent state's volatility ranged
+  from 32% to 41% a year.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
-uv run rh report states               # topics: states
+uv run rh report states               # topics: states, lookahead
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```

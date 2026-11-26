@@ -97,6 +97,111 @@ def report_states(out_dir: Path) -> dict:
     return res
 
 
+def toy_switch(turbulent: pd.Series, mkt: pd.Series, rf: pd.Series) -> pd.Series:
+    """Daily return of holding the market on days after a calm close and cash (the risk-free rate)
+    after a turbulent one; no costs."""
+    invest = (~turbulent).shift(1, fill_value=True)
+    return pd.Series(np.where(invest, mkt, rf), index=mkt.index)
+
+
+def sharpe(r: pd.Series, rf: pd.Series) -> float:
+    e = r - rf
+    return float(e.mean() / e.std() * np.sqrt(PER_YEAR))
+
+
+def report_lookahead(out_dir: Path) -> dict:
+    """Three ways to call the state, from 1999 (two states): hindsight (smoothed and Viterbi, model
+    fitted on 1993-2025); filtered with that whole-period model; and truly real time (refitted
+    each year-end on the days up to it, then filtered through the next year). How often each
+    agrees with hindsight, how late real time flags turbulent spells of 20+ days, false alarms, and
+    a toy rule - market after a calm close, cash after a turbulent one, no costs - with Sharpe
+    ratios above the risk-free rate."""
+    from rh import data, hmm
+
+    x = market()
+    X = x.to_numpy()
+    p = hmm.fit(X, 2)
+    sm, _, _ = hmm.smooth(X, p["pi"], p["A"], p["mu"], p["sd"])
+    fi, *_ = hmm.forward(X, p["pi"], p["A"], p["mu"], p["sd"])
+    vi = hmm.viterbi(X, p["pi"], p["A"], p["mu"], p["sd"])
+    rt = hmm.realtime(X, x.index, 2)
+    idx = rt["dates"]
+    full = pd.DataFrame({"smoothed": sm[:, 1] > 0.5, "Viterbi": vi == 1,
+                         "filtered": fi[:, 1] > 0.5}, index=x.index).loc[idx]
+    full["real time"] = rt["probs"][:, 1] > 0.5
+    res = {"scored": f"{len(idx)} days, {idx[0]:%d %b %Y}-{idx[-1]:%d %b %Y}; real-time model "
+                     f"refitted {len(rt['fits'])} times"}
+    for k in ("Viterbi", "filtered", "real time"):
+        res[f"  {k}: same state as smoothed"] = (f"{(full[k] == full['smoothed']).mean():.1%} of "
+                                                  f"days; turbulent {full[k].mean():.0%} of days")
+    ep = runs(full["smoothed"])
+    ep = ep[ep["days"] >= 20]
+    for k in ("filtered", "real time"):
+        lags = []
+        for r in ep.itertuples():
+            hit = np.flatnonzero(full[k].loc[r.start:r.end].to_numpy())
+            lags.append(hit[0] if len(hit) else np.nan)
+        lags = np.array(lags, float)
+        rr = runs(full[k])
+        fa = sum(1 for r in rr.itertuples() if not full["smoothed"].loc[r.start:r.end].any())
+        res[f"{k}: hindsight turbulent spells of 20+ days caught"] = (
+            f"{np.isfinite(lags).sum()} of {len(ep)}, median {np.nanmedian(lags):.0f} trading days "
+            f"late (mean {np.nanmean(lags):.1f}); {fa} of its {len(rr)} turbulent runs touched no "
+            "hindsight turbulent day")
+    m = data.factors("daily").loc[idx]
+    mkt, rf = m["MARKET"], m["RF"]
+    toy = {k: toy_switch(full[k], mkt, rf) for k in full}
+    toy["buy and hold"] = mkt
+    sh = {}
+    for k, r in toy.items():
+        sh[k] = sharpe(r, rf)
+        g = float(np.exp(np.log1p(r).sum() * PER_YEAR / len(r)) - 1)
+        res[f"toy rule, {k}"] = (f"compounded {g:+.1%} a year, volatility "
+                                 f"{r.std() * np.sqrt(PER_YEAR):.1%}, Sharpe {sh[k]:.2f}")
+    fits = rt["fits"]
+    res["real-time model's turbulent volatility over the years"] = ", ".join(
+        f"{e:%Y} {f['sd'][1] * np.sqrt(PER_YEAR):.0f}%" for e, f in list(fits.items())[::5])
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={"width_ratios": [1.5, 1]})
+    ax = axes[0]
+    win = slice("2007-10-01", "2009-12-31")
+    smp = pd.Series(sm[:, 1], index=x.index).loc[win]
+    rtp = pd.Series(rt["probs"][:, 1], index=idx).loc[win]
+    ax.fill_between(smp.index, smp, color=plots.SERIES[1], alpha=0.25, lw=0,
+                    label="hindsight (smoothed)")
+    ax.plot(rtp.index, rtp, color=plots.SERIES[0], lw=1.2, label="real time (refitted yearly)")
+    ax.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f}%")
+    ax.set_ylabel("chance of the turbulent state")
+    ax.legend(frameon=False, fontsize=9, loc="lower left", bbox_to_anchor=(0, 0.99), ncols=2)
+    ax.set_ylim(0, 1.15)
+    ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
+    import matplotlib.dates as mdates
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(1, 7)))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax.set_title("2008-2009: hindsight is sure, real time flickers", fontsize=10.5, loc="left",
+                 pad=22)
+    ax = axes[1]
+    keys = list(toy)
+    cols = [plots.SERIES[1], plots.SERIES[1], plots.MUTED, plots.SERIES[0], plots.TEXT_2]
+    y = np.arange(len(keys))[::-1]
+    ax.barh(y, [sh[k] for k in keys], color=cols, height=0.6)
+    for yy, k in zip(y, keys, strict=True):
+        ax.text(sh[k] + 0.03, yy, f"{sh[k]:.2f}", va="center", fontsize=9, color=plots.TEXT)
+    ax.set_yticks(y, ["hindsight (smoothed)", "hindsight (Viterbi)", "filtered, whole-period model",
+                      "real time", "buy and hold"])
+    ax.set_xlabel("Sharpe ratio above cash, 1999-2025 (no costs)")
+    ax.set_xlim(0, max(sh.values()) * 1.25)
+    ax.set_title("A cash-when-turbulent rule", fontsize=10.5, loc="left")
+    fig.suptitle("Hindsight labels made regime switching look three times better than it was",
+                 x=0.01, ha="left", fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "lookahead")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
+    "lookahead": report_lookahead,
 }
