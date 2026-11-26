@@ -20,7 +20,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 - [x] How many states, and do they keep their meaning across refits, out of sample
 - [x] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
 - [x] Regime-switching between stocks and cash after costs, against volatility targeting and trend
-- [ ] Size, value and momentum by regime, out of sample
+- [x] Size, value and momentum by regime, out of sample
 - [ ] Verdict: does an HMM regime earn a place next to the reference model's current risk inputs
 
 ## Findings
@@ -152,13 +152,40 @@ STT, so these are on the high side. No tax.
 - **The HMM rules weakened in the second half.** Their Sharpe ratios fell from 0.46–0.53 in
   1999–2012 to 0.27–0.40 in 2013–2025; volatility targeting held at 0.64 and 0.62.
 
+### 6. Known in real time, the regime separated factor returns far less than hindsight suggests
+
+<a href="docs/img/factors.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/factors.png"><img src="docs/img/factors.gif" alt="Average return a year of the market, size, value and momentum factors on calm and turbulent days, with the state known in real time and with hindsight, 1999-2025" width="720"></picture></a>
+
+IIMA's daily market, size (small minus big), value (cheap minus expensive) and momentum (winners
+minus losers) returns, January 1999 to December 2025 (6,719 days). Each day is labelled by
+finding 2's real-time turbulent chance at the previous close, so the label was known before the
+day's return (turbulent on 19% of days), and, for contrast, by the hindsight state that day.
+Averages are 250 times the daily mean; the difference between calm and turbulent days gets a
+Newey-West t (20 lags). A paper rule holds each long-short factor only after calm closes, with no
+costs; IIMA's factors are not directly investable.
+
+- **With hindsight the regime split everything; in real time it split almost nothing.** The market's
+  return over cash was +29.8% a year on hindsight-calm days and −38.9% on turbulent ones (t −4.51),
+  but +10.2% and +13.8% when the state was known only from the previous close (t 0.20).
+- **Small companies did badly after turbulent closes, but only before 2013.** Size averaged −23.8% a
+  year on real-time turbulent days against +5.0% on calm ones (t −3.18): −30.7% against +11.3% in
+  1999–2012, then +3.1% against −0.3% in 2013–2025.
+- **Momentum earned nearly all its return after calm closes.** +16.9% a year against +1.2% (20.4%
+  against 0.9% in 1999–2012, 14.0% against 2.4% in 2013–2025), though the difference was not
+  significant (t −0.89); holding it only after calm closes lifted its paper Sharpe ratio from 0.80
+  to 1.06, mostly by skipping its most volatile days (26.7% a year against 14.3%).
+- **Value didn't care.** +11.3% against +7.2% a year (t −0.36).
+- **No daily momentum crash in turbulent rebounds.** On the 734 real-time turbulent days when the
+  market rose, momentum averaged −0.001% a day; ff/06's crashes were a monthly, post-bear-market
+  pattern.
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
 uv run rh report states               # topics: states, lookahead, count,
-                                      # forecast, allocate
+                                      # forecast, allocate, factors
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```

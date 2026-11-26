@@ -451,10 +451,99 @@ def report_allocate(out_dir: Path) -> dict:
     return res
 
 
+def dummy_t(y: np.ndarray, z: np.ndarray, lags: int = 20) -> float:
+    """Newey-West t of the difference in means of y between z = 1 and z = 0 days."""
+    Z = np.column_stack([np.ones(len(y)), z])
+    b = np.linalg.lstsq(Z, y, rcond=None)[0]
+    e = y - Z @ b
+    ze = Z * e[:, None]
+    S = ze.T @ ze
+    for k in range(1, lags + 1):
+        g = ze[k:].T @ ze[:-k]
+        S += (1 - k / (lags + 1)) * (g + g.T)
+    inv = np.linalg.inv(Z.T @ Z)
+    return float(b[1] / np.sqrt((inv @ S @ inv)[1, 1]))
+
+
+def report_factors(out_dir: Path) -> dict:
+    """Market, size, value and momentum (IIMA's daily factors) by regime, 1999-2025: each day
+    labelled by the real-time turbulent chance at the previous close (finding 2), and by hindsight
+    (smoothed, whole-period model) for contrast. Average and volatility a year in each state, the
+    Newey-West t (20 lags) of the difference, the same split by half, momentum on turbulent days
+    when the market rose, and a paper rule holding each long-short factor only after calm closes
+    (no costs)."""
+    from rh import data, hmm
+
+    x = market()
+    m = data.factors("daily")
+    rt = hmm.realtime(x.to_numpy(), x.index, 2)
+    turb = pd.Series(rt["probs"][:, 1] > 0.5, index=rt["dates"]).shift(1).dropna().astype(bool)
+    p = hmm.fit(x.to_numpy(), 2)
+    sm, _, _ = hmm.smooth(x.to_numpy(), p["pi"], p["A"], p["mu"], p["sd"])
+    hind = pd.Series(sm[:, 1] > 0.5, index=x.index).loc[turb.index]
+    f = m.loc[turb.index]
+    res = {"days": f"{len(f)}, {f.index[0]:%b %Y}-{f.index[-1]:%b %Y}; turbulent at the previous "
+                   f"close (real time) {turb.mean():.0%} of days"}
+    names = {"MKT": "market over cash", "SMB": "size", "HML": "value", "WML": "momentum"}
+    tab = {}
+    for c, nm in names.items():
+        r = f[c] * 100
+        for lab, st in (("real time", turb), ("hindsight", hind)):
+            a, b = r[~st], r[st]
+            t = dummy_t(r.to_numpy(), st.astype(float).to_numpy())
+            tab[(c, lab)] = (a.mean() * PER_YEAR, b.mean() * PER_YEAR, t)
+            res[f"{nm}, {lab}"] = (
+                f"calm {a.mean() * PER_YEAR:+.1f}% a year (volatility "
+                f"{a.std() * np.sqrt(PER_YEAR):.1f}%), turbulent {b.mean() * PER_YEAR:+.1f}% "
+                f"({b.std() * np.sqrt(PER_YEAR):.1f}%); "
+                f"difference t {t:.2f}")
+        for h, a0, b0 in (("1999-2012", None, "2012"), ("2013-2025", "2013", None)):
+            rr, ss = r.loc[a0:b0], turb.loc[a0:b0]
+            res[f"  {nm}, real time, {h}"] = (f"calm {rr[~ss].mean() * PER_YEAR:+.1f}%, turbulent "
+                                              f"{rr[ss].mean() * PER_YEAR:+.1f}% a year")
+    w, mk = f["WML"] * 100, f["MKT"] * 100
+    up = turb & (mk > 0)
+    res["momentum on real-time turbulent days when the market rose"] = (
+        f"{int(up.sum())} days, {w[up].mean():+.3f}% a day")
+    for c in ("SMB", "HML", "WML"):
+        r = f[c]
+        on = r.where(~turb, 0.0)
+        res[f"paper rule: {names[c]} only after calm closes"] = (
+            f"Sharpe {on.mean() / on.std() * np.sqrt(PER_YEAR):.2f} against "
+            f"{r.mean() / r.std() * np.sqrt(PER_YEAR):.2f} always held (no costs)")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6))
+    for ax, lab in ((axes[0], "real time"), (axes[1], "hindsight")):
+        x_ = np.arange(len(names))
+        calm = [tab[(c, lab)][0] for c in names]
+        tur = [tab[(c, lab)][1] for c in names]
+        ax.bar(x_ - 0.19, calm, 0.36, color=plots.SERIES[0], label="calm")
+        ax.bar(x_ + 0.19, tur, 0.36, color=plots.SERIES[1], label="turbulent")
+        for i, c in enumerate(names):
+            top = max(calm[i], tur[i], 0)
+            ax.text(i, top + 3, f"t {tab[(c, lab)][2]:.1f}", ha="center", fontsize=8.5,
+                    color=plots.TEXT)
+        ax.axhline(0, color=plots.TEXT_2, lw=0.8)
+        ax.set_xticks(x_, ["market\nover cash", "size", "value", "momentum"])
+        ax.set_ylabel("average a year, %")
+        ax.legend(frameon=False, fontsize=9, loc="lower left")
+        ax.set_ylim(-45, 40)
+        title = ("Real time (state at the previous close)" if lab == "real time"
+                 else "With hindsight (smoothed)")
+        ax.set_title(title, fontsize=10.5, loc="left")
+    fig.suptitle("Known in real time, the regime separated factor returns far less than hindsight "
+                 "suggests", x=0.01, ha="left", fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "factors")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
     "lookahead": report_lookahead,
     "count": report_states_count,
     "forecast": report_forecast,
     "allocate": report_allocate,
+    "factors": report_factors,
 }

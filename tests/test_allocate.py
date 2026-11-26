@@ -21,3 +21,12 @@ def test_band_needs_both_thresholds_and_sticky_ignores_small_moves():
     assert list(Al.band(p)) == [1, 1, 0, 0, 0, 1, 1]
     t = pd.Series([1.0, 0.95, 0.85, 0.84, 0.6])
     assert list(Al.sticky(t)) == [1.0, 1.0, 0.85, 0.85, 0.6]
+
+
+def test_dummy_t_detects_a_shift_and_not_noise():
+    from rh.reports import dummy_t
+
+    rng = np.random.default_rng(0)
+    z = (rng.random(4000) < 0.3).astype(float)
+    assert abs(dummy_t(rng.normal(0, 1, 4000), z)) < 3
+    assert dummy_t(rng.normal(0, 1, 4000) - 0.5 * z, z) < -8
