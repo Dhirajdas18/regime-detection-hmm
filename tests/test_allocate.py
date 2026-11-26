@@ -30,3 +30,18 @@ def test_dummy_t_detects_a_shift_and_not_noise():
     z = (rng.random(4000) < 0.3).astype(float)
     assert abs(dummy_t(rng.normal(0, 1, 4000), z)) < 3
     assert dummy_t(rng.normal(0, 1, 4000) - 0.5 * z, z) < -8
+
+
+def test_expanding_oos_only_fits_on_outcomes_known_by_the_forecast_day():
+    import pandas as pd
+
+    from rh.reports import expanding_oos
+
+    idx = pd.bdate_range("2015-01-01", periods=900)
+    x = np.sin(np.arange(900) / 20)
+    y = 2 * x
+    y[700:] = 2 * x[700:] + 5  # the relation shifts on day 700
+    df = pd.DataFrame({"y": y, "x": x}, index=idx)
+    e, _ = expanding_oos(df, ["x"], h=21, start=str(idx[600].date()), min_obs=100)
+    k = 700 - 600  # error index of day 700
+    assert np.allclose(e[: k + 21], np.r_[np.zeros(k), np.full(21, 5.0)], atol=1e-6)

@@ -539,6 +539,111 @@ def report_factors(out_dir: Path) -> dict:
     return res
 
 
+def expanding_oos(df: pd.DataFrame, cols: list[str], h: int = 21, start: str = "2018-01-01",
+                  min_obs: int = 500) -> tuple[np.ndarray, np.ndarray]:
+    """Forecast errors of y from `cols` by least squares on rows whose h-day outcome was known by
+    each forecast day, and of the same rows' mean (the benchmark), from `start`."""
+    err, bench = [], []
+    y = df["y"].to_numpy()
+    X = df[cols].to_numpy()
+    for i, t in enumerate(df.index):
+        if t < pd.Timestamp(start):
+            continue
+        n = max(0, i - h)  # rows up to i - h - 1: their h-day outcomes end by day i - 1
+        if n < min_obs:
+            continue
+        Z = np.column_stack([np.ones(n), X[:n]])
+        b = np.linalg.lstsq(Z, y[:n], rcond=None)[0]
+        err.append(y[i] - np.r_[1, X[i]] @ b)
+        bench.append(y[i] - y[:n].mean())
+    return np.array(err), np.array(bench)
+
+
+def report_verdict(out_dir: Path) -> dict:
+    """Does the HMM add to the reference model's current regime input, India VIX? NIFTY's realised volatility
+    over the next 21 trading days (log), forecast from India VIX, NIFTY's past 21-day volatility
+    and the HMM's real-time turbulent chance (finding 2, on IIMA's market) at each close, 2015-
+    2025: out-of-sample R² from January 2018 (expanding least squares on outcomes already known,
+    against their mean), and how often the HMM's turbulent flag agrees with VIX above its expanding
+    80th percentile."""
+    from rh import hmm, lake
+
+    x = market()
+    rt = hmm.realtime(x.to_numpy(), x.index, 2)
+    pt = pd.Series(rt["probs"][:, 1], index=rt["dates"])
+    m = lake.nifty_vix()
+    r = m["r"]
+    fut = np.sqrt((r ** 2).rolling(21).sum().shift(-21) * PER_YEAR / 21)
+    past = np.sqrt((r ** 2).rolling(21).sum() * PER_YEAR / 21)
+    df = pd.DataFrame({"y": np.log(fut), "vix": np.log(m["vix"]), "past": np.log(past),
+                       "hmm": pt}).dropna().loc["2015":]
+    res = {"days": f"{len(df)}, {df.index[0]:%b %Y}-{df.index[-1]:%b %Y}; forecasts from "
+                   "Jan 2018"}
+    sets = {"India VIX": ["vix"], "VIX + HMM": ["vix", "hmm"],
+            "VIX + past volatility": ["vix", "past"], "VIX + past + HMM": ["vix", "past", "hmm"],
+            "past volatility": ["past"], "HMM": ["hmm"]}
+    r2, errs = {}, {}
+    for k, cols in sets.items():
+        e, b = expanding_oos(df, cols)
+        errs[k] = e
+        r2[k] = 1 - (e ** 2).sum() / (b ** 2).sum()
+        res[f"next-21-day NIFTY volatility from {k}"] = (f"{len(e)} forecasts, out-of-sample R² "
+                                                          f"{r2[k]:.1%}")
+    d = errs["VIX + HMM"] ** 2 - errs["India VIX"] ** 2
+    res["  adding the HMM to VIX"] = (f"squared error {d.mean():+.4f} a day (t "
+                                      f"{d.mean() / nw_se_mean(d, 21):.2f}; above 0 = worse)")
+    vh = (m["vix"] > m["vix"].expanding(250).quantile(0.8)).reindex(df.index)
+    hf = df["hmm"] > 0.5
+    res["flags"] = (f"HMM turbulent {hf.mean():.0%} of days, VIX above its 80th percentile "
+                    f"{vh.mean():.0%}; same call on {(hf == vh).mean():.0%} of days; correlation "
+                    f"of the HMM chance with log VIX {df['hmm'].corr(df['vix']):.2f}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), gridspec_kw={"width_ratios": [1, 1.3]})
+    ax = axes[0]
+    keys = list(sets)
+    y = np.arange(len(keys))[::-1]
+    cols_ = [plots.SERIES[0], plots.SERIES[1], plots.SERIES[0], plots.SERIES[1], plots.MUTED,
+             plots.SERIES[1]]
+    ax.barh(y, [100 * r2[k] for k in keys], color=cols_, height=0.6)
+    for yy, k in zip(y, keys, strict=True):
+        ax.text(100 * r2[k] + 0.8, yy, f"{100 * r2[k]:.1f}%", va="center", fontsize=9,
+                color=plots.TEXT)
+    ax.set_yticks(y, keys, fontsize=9)
+    ax.set_xlim(0, 60)
+    ax.set_xlabel("out-of-sample R², NIFTY's next-21-day volatility, 2018-2025")
+    ax.set_title("Forecasting NIFTY's next-month volatility", fontsize=10.5, loc="left")
+    ax = axes[1]
+    w = slice("2019-07-01", "2021-06-30")
+    ax.plot(m["vix"].loc[w].index, m["vix"].loc[w], color=plots.SERIES[0], lw=1.6,
+            label="India VIX (left)")
+    ax.set_ylabel("India VIX, % a year")
+    ax2 = ax.twinx()
+    ax2.fill_between(df["hmm"].loc[w].index, df["hmm"].loc[w], color=plots.SERIES[1], alpha=0.3,
+                     lw=0, label="HMM turbulent chance (right)")
+    ax2.set_ylim(0, 1.05)
+    ax2.yaxis.set_major_formatter(lambda v, _: f"{100 * v:.0f}%")
+    ax2.set_ylabel("HMM turbulent chance, real time")
+    h1, l1 = ax.get_legend_handles_labels()
+    h2, l2 = ax2.get_legend_handles_labels()
+    ax.legend(h1 + h2, l1 + l2, frameon=False, fontsize=8.5, loc="upper left",
+              bbox_to_anchor=(0, 1.0), ncols=2)
+    ax.set_zorder(ax2.get_zorder() + 1)
+    ax.patch.set_visible(False)
+    ax.set_ylim(top=m["vix"].loc[w].max() * 1.2)
+    import matplotlib.dates as mdates
+
+    ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(1, 7)))
+    ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax.set_title("2020: VIX tracked the stress; the HMM flipped on and off", fontsize=10.5,
+                 loc="left")
+    fig.suptitle("For the reference model the HMM regime added nothing to India VIX", x=0.01, ha="left",
+                 fontweight="bold")
+    fig.tight_layout()
+    plots.save(fig, out_dir, "verdict")
+    plt.close(fig)
+    return res
+
+
 REPORTS: dict[str, Callable[[Path], dict]] = {
     "states": report_states,
     "lookahead": report_lookahead,
@@ -546,4 +651,5 @@ REPORTS: dict[str, Callable[[Path], dict]] = {
     "forecast": report_forecast,
     "allocate": report_allocate,
     "factors": report_factors,
+    "verdict": report_verdict,
 }

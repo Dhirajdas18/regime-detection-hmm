@@ -21,7 +21,7 @@ the market was calm or turbulent, as seen at the time and with hindsight.
 - [x] Volatility and VaR forecasts from the regime against EWMA, GJR-GARCH and India VIX
 - [x] Regime-switching between stocks and cash after costs, against volatility targeting and trend
 - [x] Size, value and momentum by regime, out of sample
-- [ ] Verdict: does an HMM regime earn a place next to the reference model's current risk inputs
+- [x] Verdict: does an HMM regime earn a place next to the reference model's current risk inputs
 
 ## Findings
 
@@ -179,13 +179,46 @@ costs; IIMA's factors are not directly investable.
   market rose, momentum averaged −0.001% a day; ff/06's crashes were a monthly, post-bear-market
   pattern.
 
+### 7. For the reference model the HMM regime added nothing to India VIX
+
+<a href="docs/img/verdict.png"><picture><source media="(prefers-reduced-motion: reduce)" srcset="docs/img/verdict.png"><img src="docs/img/verdict.gif" alt="Out-of-sample R-squared for NIFTY's next-21-day volatility from India VIX, the HMM and combinations, 2018-2025, and India VIX against the HMM's real-time turbulent chance through 2019-2021" width="720"></picture></a>
+
+the reference model already reads the risk regime from India VIX (with stress breadth, not tested here). The
+question is whether the HMM adds to it: NIFTY's realised volatility over the next 21 trading days
+(in logs) is forecast at each close from India VIX, NIFTY's past 21-day volatility and finding 2's
+real-time turbulent chance (fitted on IIMA's market), January 2015 to December 2025 (2,707 days).
+From January 2018 each forecast is a least-squares fit on the days whose 21-day outcome was already
+complete, scored against those days' average (out-of-sample R²; 1,975 forecasts, overlapping, so
+about 95 independent months). The HMM's turbulent flag is also compared with VIX above its own
+expanding 80th percentile.
+
+- **India VIX alone forecast best.** Out-of-sample R² 45.3%; past volatility 31.1%; the HMM 9.7%.
+- **Adding the HMM made VIX slightly worse.** 45.0% with VIX and the HMM, 43.9% with VIX, past
+  volatility and the HMM; the extra squared error was not significant (t 0.35).
+- **The two flags mostly agreed, on different scales.** The HMM called 9% of days turbulent, VIX
+  was in its top fifth on 21%; they made the same call on 82% of days, and the HMM's chance
+  correlated 0.48 with log VIX. In 2020 VIX tracked the stress continuously while the HMM's chance
+  flipped between near 0 and near 100%.
+- **The verdict.**
+
+  | Question | Answer (finding) |
+  |---|---|
+  | Do regimes exist? | Yes: calm and turbulent spells lasting weeks (1) |
+  | Can you see them in real time? | Only ~3 days late, with flicker; hindsight labels mislead (2) |
+  | How many states? | Two; a fourth was a distribution quirk (3) |
+  | Better risk forecasts? | No: GJR-GARCH and India VIX did better (4) |
+  | Better allocation? | No: lost to buy and hold after costs; volatility targeting and trend did better (5) |
+  | Factor timing? | Only a candidate: momentum earned little after turbulent closes (6) |
+  | Next to India VIX? | Adds nothing (7) |
+
 ## Quick start
 
 ```bash
 uv sync
 uv run python scripts/fetch_data.py   # IIMA factor library -> data/iima/
 uv run rh report states               # topics: states, lookahead, count,
-                                      # forecast, allocate, factors
+                                      # forecast, allocate, factors,
+                                      # verdict
 uv run python scripts/build_site.py   # regime lab -> site/index.html
 uv run pytest
 ```
