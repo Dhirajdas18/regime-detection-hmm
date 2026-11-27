@@ -588,7 +588,7 @@ def expanding_oos(df: pd.DataFrame, cols: list[str], h: int = 21, start: str = "
 
 
 def report_verdict(out_dir: Path) -> dict:
-    """Does the HMM add to the reference model's current regime input, India VIX? NIFTY's realised volatility
+    """Does the HMM add to the reference regime input, India VIX? NIFTY's realised volatility
     over the next 21 trading days (log), forecast from India VIX, NIFTY's past 21-day volatility
     and the HMM's real-time turbulent chance (finding 2, on IIMA's market) at each close, 2015-
     2025: out-of-sample R² from January 2018 (expanding least squares on outcomes already known,
@@ -663,7 +663,7 @@ def report_verdict(out_dir: Path) -> dict:
     ax.xaxis.set_major_locator(mdates.MonthLocator(bymonth=(1, 7)))
     ax.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
     ax.set_title("2020: VIX stayed high; the HMM flipped on and off", fontsize=10.5, loc="left")
-    fig.suptitle("For the reference model the HMM regime added nothing to India VIX", x=0.01, ha="left",
+    fig.suptitle("For the reference model, the HMM added nothing to India VIX", x=0.01, ha="left",
                  fontweight="bold")
     fig.tight_layout()
     plots.save(fig, out_dir, "verdict")
